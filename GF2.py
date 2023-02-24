@@ -1,7 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
 
-
 class GF:
     irreducibles = {
         2: 0b111,
@@ -56,6 +55,11 @@ class GF:
         a, b = self._nums2polys(x, self.irreducibles[self.e])
         _, inv, _ = self._eGCD(a, b)
         return inv
+
+    def get_padded_poly(self, length, poly):
+        errpoly = self._num2poly(poly).c
+        errpoly = np.pad(errpoly, [(length-len(errpoly), 0)])
+        return errpoly
 
     def _eGCD(self, a, b):
         if self._poly2num(a) == 0:
@@ -112,7 +116,7 @@ class GF:
             if mat[n, i] == 1:
                 mat[[i, n]] = mat[[n, i]]
 
-# linear code utility
+# Linear code utility
     def check_canonical(self, mat):
         canonical = True
         for i in np.arange(min(mat.shape)):
@@ -120,6 +124,16 @@ class GF:
                 canonical = False
                 break
         return canonical
+
+    def get_generator_matrix(self, mat):
+        n_mat = max(mat.shape)
+        k_mat = n_mat - min(mat.shape)
+        gen = np.zeros([k_mat, k_mat])
+        for x in np.arange(k_mat):
+            gen[x, x] = 1
+
+        gen = np.hstack([gen, mat[:, :k_mat].T])
+        return gen
 
     def get_control_matrix(self, mat):
         k_mat = min(mat.shape)
@@ -137,30 +151,123 @@ class GF:
         syndromes = []
         amount_of_syndromes = pow(2, diffnk)
 
+        for triv in np.arange(n_mat):
+            errpoly = self.get_padded_poly(n_mat, pow(2, triv))
+            res = np.matmul([errpoly], h.T) % 2
+            syndromes.append((errpoly, res[0]))
+
         for err in np.arange(pow(2, n_mat)):
-            errpoly = self.get_errpoly(n_mat, err)
-            res = np.matmul(errpoly, h.T) % 2
+            errpoly = self.get_padded_poly(n_mat, err)
+            res = np.matmul([errpoly], h.T) % 2
 
             if not np.any([(syndrome == res).all() for _, syndrome in syndromes]):
-                syndromes.append((errpoly, res))
+                syndromes.append((errpoly, res[0]))
                 if len(syndromes) == amount_of_syndromes:
                     break
 
         return syndromes
 
-    def get_errpoly(self, n_mat, err):
-        errpoly = self._num2poly(err).c
-        errpoly = np.pad(errpoly, [(n_mat-len(errpoly), 0)])
-        errpoly = np.reshape(errpoly, (1, -1))
+    def decode(self, message, control, syndromes):
+        errpoly = self.get_padded_poly(max(control.shape), message)
+        res = np.matmul([errpoly], control.T) % 2
+        for codeword, syndrome in syndromes:
+            if (syndrome == res).all():
+                return ((errpoly - codeword) % 2)
+    
+# Hamming code utility
+    def hamming(self, m):
+        assert(m >= 3)
+        n = pow(2, m)-1
+        column_values = np.arange(1, n+1)
+        for i in reversed(np.arange(m)):
+            column_values = np.append(column_values, column_values[pow(2, i)-1])
+            column_values = np.delete(column_values, pow(2, i)-1)
+
+        mat = map(lambda poly: self.get_padded_poly(m, poly), column_values)
+        mat = np.column_stack(list(mat))
+        return mat
+
+    def hamming_decode(self, message, control):
+        errpoly = self.get_padded_poly(max(control.shape), message)
+        syndrome = (np.matmul([errpoly], control.T) % 2)[0]
+        if not (syndrome==0).all():
+            factor = syndrome[np.nonzero(syndrome)[0][0]]
+            search = syndrome * factor
+            error_index = np.nonzero(np.all(control.T == search, axis=1))
+            errpoly[error_index] = errpoly[error_index] - factor % 2
         return errpoly
 
+# Reed muller codes
+    def reed_muller(self, r, m):
+        if r == 0:
+            return np.ones((1,pow(2,m)))
+        if r > m:
+            return self.reed_muller(m, m)
+
+        tl = self.reed_muller(r, m-1)
+        br = self.reed_muller(r-1, m-1)
+        bl = np.zeros((br.shape[0], tl.shape[1]))
+        return self.forge_four_corners(tl, br, bl)
+
+    def forge_four_corners(self, tl, br, bl):
+        top = np.hstack((tl, tl))
+        bot = np.hstack((bl, br))
+        return np.vstack((top, bot))
+
+# Reed solomon codes
+    def find_primitive(self, q):
+        for alpha in range(1, q):
+            ls = []
+            for i in range(0, q-1):
+                ls.append(pow(alpha, i, q))
+            if len(ls) == len(set(ls)):
+                return alpha
+
+    def get_polynomials(self, q, d):
+        alpha = self.find_primitive(q)
+        roots = []
+        for i in range(q):
+            roots.append(np.poly1d([1, (-(pow(alpha, i, q)))]))
+        
+        gx = hx = 1
+        for i in range(1, d):
+            gx *= roots[i]
+        for i in range(d, q):
+            hx *= roots[i]
+
+        gx = np.poly1d([x % q for x in gx.c])
+        hx = np.poly1d([x % q for x in hx.c])
+
+        return gx, hx
+
+    def get_matrices(self, q, d):
+        gx, hx = self.get_polynomials(q, d)
+        gx = gx.c
+        hx = hx.c
+        g = np.zeros([q-d, q-1])
+        h = np.zeros([d-1, q-1])
+        for i in range(q-d):
+            g[i, i:len(gx)+i] = gx[::-1]
+        for i in range(d-1):
+            h[i, i:len(hx)+i] = hx[::]
+
+        return g, h
+
+    def vandermonde_matrix(self, q, d):
+        alpha = self.find_primitive(q)
+        h = np.empty([d-1, q-1])
+        for i in range(1, d):
+            for j in range(0,q-1):
+                h[i-1, j] = pow(alpha, i*j, q)
+        return h
+
 # Interface methods (many of these methods will be removed to become tests)
-    def multable(self, e):
+    def multable(self):
         a = b = np.arange(pow(2, self.e))[1:]
         return np.array([[self._mul(x, y) for y in b] for x in a])
 
     def show_multable(self):
-        plt.imshow(np.subtract(0, self.multable(self.e)), 'gray')
+        plt.imshow(np.subtract(0, self.multable()), 'gray')
         plt.show()
 
     def inverses(self):
@@ -185,12 +292,42 @@ class GF:
             f'(ab)c={self._mul(ab, c)}, a(bc)={self._mul(a, bc)}')
 
     def demo_gauss(self):
-        a = [[1, 0, 1, 0, 1, 0], [1, 1, 0, 1, 1, 0],
-             [0, 1, 1, 0, 1, 0], [1, 0, 0, 0, 1, 1]]
-        a = self.gauss(a)
-        ct = self.get_control_matrix(a)
-        for tp in self.compute_syndromes(ct):
-            print(tp)
+        m = 4
+        generator_matrix = self.get_generator_matrix(self.hamming(m))
+        generator_matrix = self.gauss(generator_matrix)
+        control_matrix = self.get_control_matrix(generator_matrix)
+        
+        syndrome_table = self.compute_syndromes(control_matrix)
+        
+        for entry in syndrome_table:
+            print(*entry)
+
+        n = pow(2,m)-1
+
+        print('There should be no prints happening here!')
+        for i in np.arange(pow(2,n)):
+            decoded = self.decode(i, control_matrix, syndrome_table)
+            original = self.get_padded_poly(n, i)
+            difference = sum(i != j for i, j in zip(original, decoded))
+            if difference > 1:
+                print(difference)
+        print('If there were no prints, thats great!')
+
+        print('There should be no prints happening here!')
+        for i in np.arange(pow(2,n)):
+            decoded = self.hamming_decode(i, control_matrix)
+            original = self.get_padded_poly(n, i)
+            difference = sum(i != j for i, j in zip(original, decoded))
+            if difference > 1:
+                print(difference)
+        print('If there were no prints, thats great!')
+
+    def verify_reed_solomon(self):
+        g , h1 = self.get_matrices(7, 5)
+        h = self.vandermonde_matrix(7, 5)
+        print(np.matmul(g, h1.T)%7)
+        print(np.matmul(g, h.T)%7)
+
 
 
 GF(4).show_multable()
@@ -198,3 +335,5 @@ GF(4).verify_cummutativity()
 GF(4).inverses()
 GF(4).verify_inverses()
 GF(4).demo_gauss()
+print(GF(4).reed_muller(2,4))
+GF(4).verify_reed_solomon()
