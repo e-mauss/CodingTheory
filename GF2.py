@@ -215,17 +215,21 @@ class GF:
         return np.vstack((top, bot))
 
 # Reed solomon codes
-    def find_primitive(self, q):
+    def find_primitive(self):
+        q = pow(2, self.e)
         for alpha in range(1, q):
+            acc = 1
             ls = []
             for i in range(0, q-1):
-                ls.append(pow(alpha, i, q))
+                acc = self._polymul(acc, alpha)
+                ls.append(self._poly2num(acc))
             if len(ls) == len(set(ls)):
                 return alpha
 
-    def get_polynomials(self, q, d):
-        alpha = self.find_primitive(q)
+    def get_polynomials(self, d):
+        alpha = self.find_primitive()
         roots = []
+        q = pow(2, self.e)
         for i in range(q):
             roots.append(np.poly1d([1, (-(pow(alpha, i, q)))]))
         
@@ -240,8 +244,9 @@ class GF:
 
         return gx, hx
 
-    def get_matrices(self, q, d):
-        gx, hx = self.get_polynomials(q, d)
+    def get_matrices(self, d):
+        gx, hx = self.get_polynomials(d)
+        q = pow(2, self.e)
         gx = gx.c
         hx = hx.c
         g = np.zeros([q-d, q-1])
@@ -253,8 +258,9 @@ class GF:
 
         return g, h
 
-    def vandermonde_matrix(self, q, d):
-        alpha = self.find_primitive(q)
+    def vandermonde_matrix(self, d):
+        alpha = self.find_primitive()
+        q = pow(2, self.e)
         h = np.empty([d-1, q-1])
         for i in range(1, d):
             for j in range(0,q-1):
@@ -322,11 +328,13 @@ class GF:
                 print(difference)
         print('If there were no prints, thats great!')
 
-    def verify_reed_solomon(self):
-        g , h1 = self.get_matrices(7, 5)
-        h = self.vandermonde_matrix(7, 5)
-        print(np.matmul(g, h1.T)%7)
-        print(np.matmul(g, h.T)%7)
+    def verify_reed_solomon(self, d):
+        g , h1 = self.get_matrices(d)
+        h = self.vandermonde_matrix(d)
+        print(h1)
+        print(h)
+        print(np.matmul(g, h1.T)%2)
+        print(np.matmul(g, h.T)%2)
 
 
 
@@ -336,4 +344,4 @@ GF(4).inverses()
 GF(4).verify_inverses()
 GF(4).demo_gauss()
 print(GF(4).reed_muller(2,4))
-GF(4).verify_reed_solomon()
+GF(4).verify_reed_solomon(5)
