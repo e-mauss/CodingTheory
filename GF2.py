@@ -227,30 +227,39 @@ class GF:
                 return alpha
 
     def get_polynomials(self, d):
-        alpha = self.find_primitive()
-        roots = []
+        alpha = self._num2poly(self.find_primitive())
         q = pow(2, self.e)
+        acc = 1
+        roots = []
         for i in range(q):
-            roots.append(np.poly1d([1, (-(pow(alpha, i, q)))]))
-        
-        gx = hx = 1
-        for i in range(1, d):
-            gx *= roots[i]
-        for i in range(d, q):
-            hx *= roots[i]
+            acc = self._polymul(acc, alpha)
+            roots.append([1, acc])
 
-        gx = np.poly1d([x % q for x in gx.c])
-        hx = np.poly1d([x % q for x in hx.c])
+        gx = [1]
+        for i in range(0, d-1):
+            gx = self.nested_poly_mul(gx, roots[i])
+        hx = [1]
+        for i in range(d-1, q-1):
+            hx = self.nested_poly_mul(hx, roots[i])
 
         return gx, hx
+
+    def nested_poly_mul(self, a, b):
+        res = [0]*(len(a)+len(b)-1)
+        for powa, coeffa in enumerate(a):
+            for powb, coeffb in enumerate(b):
+                if isinstance(coeffa, int):
+                    coeffa = np.poly1d([coeffa])
+                if isinstance(coeffb, int):
+                    coeffb = np.poly1d([coeffb])
+                res[powa+powb] += self._polymul(coeffa, coeffb)
+        return [self._coeff_adjust(x) for x in res]
 
     def get_matrices(self, d):
         gx, hx = self.get_polynomials(d)
         q = pow(2, self.e)
-        gx = gx.c
-        hx = hx.c
-        g = np.zeros([q-d, q-1])
-        h = np.zeros([d-1, q-1])
+        g = np.zeros([q-d, q-1], dtype=np.poly1d)
+        h = np.zeros([d-1, q-1], dtype=np.poly1d)
         for i in range(q-d):
             g[i, i:len(gx)+i] = gx[::-1]
         for i in range(d-1):
@@ -261,10 +270,13 @@ class GF:
     def vandermonde_matrix(self, d):
         alpha = self.find_primitive()
         q = pow(2, self.e)
-        h = np.empty([d-1, q-1])
+        h = np.empty([d-1, q-1], dtype=np.poly1d)
         for i in range(1, d):
             for j in range(0,q-1):
-                h[i-1, j] = pow(alpha, i*j, q)
+                acc = 1
+                for k in range(i*j):
+                    acc = self._polymul(acc, alpha)
+                h[i-1, j] = acc
         return h
 
 # Interface methods (many of these methods will be removed to become tests)
@@ -331,11 +343,12 @@ class GF:
     def verify_reed_solomon(self, d):
         g , h1 = self.get_matrices(d)
         h = self.vandermonde_matrix(d)
-        print(h1)
-        print(h)
-        print(np.matmul(g, h1.T)%2)
-        print(np.matmul(g, h.T)%2)
 
+        a = np.matmul(g, h1.T)
+        for i in range(a.shape[0]):
+            for j in range(a.shape[1]):
+                a[i, j] = self._polymod(a[i, j], self.irreducibles[self.e])
+        print(a)
 
 
 GF(4).show_multable()
