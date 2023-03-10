@@ -194,7 +194,7 @@ class GF:
             factor = syndrome[np.nonzero(syndrome)[0][0]]
             search = syndrome * factor
             error_index = np.nonzero(np.all(control.T == search, axis=1))
-            errpoly[error_index] = errpoly[error_index] - factor % 2
+            errpoly[error_index] = (errpoly[error_index] - factor) % 2
         return errpoly
 
 # Reed muller codes
@@ -349,12 +349,3 @@ class GF:
             for j in range(a.shape[1]):
                 a[i, j] = self._polymod(a[i, j], self.irreducibles[self.e])
         print(a)
-
-
-GF(4).show_multable()
-GF(4).verify_cummutativity()
-GF(4).inverses()
-GF(4).verify_inverses()
-GF(4).demo_gauss()
-print(GF(4).reed_muller(2,4))
-GF(4).verify_reed_solomon(5)
